@@ -98,7 +98,7 @@ const llmWithTools = llm.bindTools(tools);
 // LLM Node: Decides which tool(s) to use based on user input
 async function llmCall(state) {
   const lastMessage = state.messages.at(-1).content.toLowerCase();
-  const resume = ["your resume content here"];
+  const resume = `[${`Your resume content here `}]`;
   const focus = '';
 
   const resultMessages = [];
