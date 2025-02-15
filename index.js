@@ -6,12 +6,12 @@ import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { StateGraph, MessagesAnnotation } from '@langchain/langgraph';
 import { ToolMessage } from '@langchain/core/messages';
 
-// Load LLM (Google Gemini 1.5)
+
 const llm = new ChatGoogleGenerativeAI({
   model: 'gemini-1.5-flash',
 });
 
-// Define schema for resume analysis
+
 const resumeSchema = z.object({
   resume: z.string().min(100).describe('The resume content to analyze'),
   focus: z.string().optional().describe('Specific area to focus on'),
@@ -20,7 +20,7 @@ const resumeSchema = z.object({
 // Appreciation Tool
 const resumeAppreciation = tool(
   async ({ resume, focus }) => {
-    const prompt = `Appreciate this resume, highlighting key strengths and positive aspects.
+    const prompt = `**Appreciation Section**\nAppreciate this resume, highlighting key strengths and positive aspects.
     
     Resume Content:
     ${focus ? `Focus Area: ${focus}\n` : ''} 
@@ -29,7 +29,9 @@ const resumeAppreciation = tool(
     Provide:
     1. 3 key strengths or positive aspects
     2. Focus on experience and projects
-    3. Use Hinglish`;
+    3. Use Hinglish
+    word limit : 100 words in 3 points give and give heading appericiation at top
+    `;
 
     const result = await llm.invoke(prompt);
     return result.content;
@@ -37,7 +39,7 @@ const resumeAppreciation = tool(
   {
     name: 'resume_appreciation',
     description:
-      'Appreciate the key strengths and positive aspects in Hinglish',
+      'Appreciate the key strengths and positive aspects in Hinglish ',
     schema: resumeSchema,
   }
 );
@@ -45,7 +47,7 @@ const resumeAppreciation = tool(
 // Roast Tool
 const resumeRoast = tool(
   async ({ resume, focus }) => {
-    const prompt = `Roast this resume, providing constructive criticism with 3 key areas for improvement in Hinglish:
+    const prompt = `**Roast Section**\nRoast this resume, providing constructive criticism with 3 key areas for improvement in Hinglish:
     
     Resume Content:
     ${focus ? `Focus Area: ${focus}\n` : ''} 
@@ -54,7 +56,9 @@ const resumeRoast = tool(
     Provide:
     1. 3 key areas for improvement
     2. Specific examples of how to improve
-    3. Use Hinglish for a light-hearted tone`;
+    3. Use Hinglish for a light-hearted tone
+     word limit : 100 words and give heading roast at top
+    `;
 
     const result = await llm.invoke(prompt);
     return result.content;
@@ -69,7 +73,7 @@ const resumeRoast = tool(
 // Feedback Tool
 const resumeFeedback = tool(
   async ({ resume, focus }) => {
-    const prompt = `Provide professional feedback on this resume with suggestions for improvement in Hinglish:
+    const prompt = `**Feedback Section**\nProvide professional feedback on this resume with suggestions for improvement in Hinglish:
     
     Resume Content:
     ${focus ? `Focus Area: ${focus}\n` : ''} 
@@ -78,7 +82,9 @@ const resumeFeedback = tool(
     Provide:
     1. 3 actionable suggestions for improvement
     2. Focus on areas such as formatting, wording, and presentation
-    3. Use Hinglish`;
+    3. Use Hinglish
+     word limit : 100 words and give heading feedback at top
+    `;
 
     const result = await llm.invoke(prompt);
     return result.content;
@@ -95,36 +101,58 @@ const tools = [resumeAppreciation, resumeRoast, resumeFeedback];
 const toolsByName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
 const llmWithTools = llm.bindTools(tools);
 
+function detectExecutionOrder(message) {
+  const keywordPatterns = [
+    { pattern: /\b(roast)\b/i, name: 'roast' }, // Case-insensitive matching with word boundaries
+    { pattern: /\b(appreciation)\b/i, name: 'appreciation' },
+    { pattern: /\b(feedback)\b/i, name: 'feedback' },
+  ];
+
+  const executionOrder = [];
+  const usedKeywords = new Set(); // Track used keywords to avoid duplicates
+
+  // Find all matches in the message
+  for (const { pattern, name } of keywordPatterns) {
+    const matches = message.match(pattern);
+    if (matches && !usedKeywords.has(name)) {
+      executionOrder.push(name);
+      usedKeywords.add(name);
+    }
+  }
+
+  // If no specific request, default to feedback
+  return executionOrder.length > 0 ? executionOrder : ['feedback'];
+}
+
 // LLM Node: Decides which tool(s) to use based on user input
 async function llmCall(state) {
   const lastMessage = state.messages.at(-1).content.toLowerCase();
-  const resume = `[${`Your resume content here `}]`;
+  const resume = `[${`Your resume content here`}]`;
   const focus = '';
 
   const resultMessages = [];
 
-  // Check if the user wants appreciation, roast, or feedback
-  if (lastMessage.includes('appreciation')) {
-    resultMessages.push(
-      await toolsByName['resume_appreciation'].invoke({ resume, focus })
-    );
-  }
-  if (lastMessage.includes('roast')) {
-    resultMessages.push(
-      await toolsByName['resume_roast'].invoke({ resume, focus })
-    );
-  }
-  if (lastMessage.includes('feedback')) {
-    resultMessages.push(
-      await toolsByName['resume_feedback'].invoke({ resume, focus })
-    );
-  }
+  // Detect execution order from user message
+  const executionOrder = detectExecutionOrder(lastMessage);
 
-  // If no specific request, respond with default feedback
-  if (!resultMessages.length) {
-    resultMessages.push({
-      content: 'Please specify either appreciation, roast, or feedback.',
-    });
+  for (const action of executionOrder) {
+    switch (action) {
+      case 'appreciation':
+        resultMessages.push(
+          await toolsByName['resume_appreciation'].invoke({ resume, focus })
+        );
+        break;
+      case 'roast':
+        resultMessages.push(
+          await toolsByName['resume_roast'].invoke({ resume, focus })
+        );
+        break;
+      case 'feedback':
+        resultMessages.push(
+          await toolsByName['resume_feedback'].invoke({ resume, focus })
+        );
+        break;
+    }
   }
 
   return { messages: resultMessages };
@@ -178,13 +206,16 @@ const agentBuilder = new StateGraph(MessagesAnnotation)
 const messages = [
   {
     role: 'user',
-    content: `Please give roast than appreciation this resume than feedback : `,
+    content: `Please first give roast than appreciation than feedback on this resume :`,
   },
 ];
 
 try {
   const result = await agentBuilder.invoke({ messages });
-  console.log('Final Analysis:', result.messages.at(-1).content);
+  const formattedOutput = result.messages
+    .map((msg) => msg.content)
+    .join('\n\n');
+  console.log('Final Analysis:\n', formattedOutput);
 } catch (error) {
   console.error('Analysis Error:', error);
 }
